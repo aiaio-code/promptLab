@@ -21,3 +21,5 @@ Describe what the ingress and egress points are in the application, especially w
 □ External dependencies — everything the service relies on
 □ Context strategy section — for each stage of exploration, whether you gave the AI the whole repository
 or a single file, and why, based on the size or coupling of the code
+
+
