@@ -1,25 +1,32 @@
 # System Model
 ## Architecture
+
 Describe what this application does and how the components interact with each other.
 
-| Context | Rationale | Description |
-| --- | --- | --- |
-| Whole repo | For the architecture of a codebase, it makes sense to analyze the entire repository since we're attempting to understand the application at a system level. It's okay to view at a high level here; in fact, anything low level would be confusing or noise. | TBD |
+| **Context** | **Rationale**                                                                                                                                                                                                                                                | **Description**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Whole repo  | For the architecture of a codebase, it makes sense to analyze the entire repository since we're attempting to understand the application at a system level. It's okay to view at a high level here; in fact, anything low level would be confusing or noise. | This application serves as a repository for prompt templates that are submitted by the user. Prompt templates are added to collections as an aid for organization. User can view and search for prompts. They can also list prompts associated with a collection. Users will have the ability to edit existing prompts, delete prompts, and finally delete collections.<br><br>The structure of the application, once fully implemented, will consist of a front-end UI the user interacts with. The UI communicates with the business logic (`backend`) through the use of FastAPI calls. There is no persistent storage, which makes the application of little practical use, but easily fixed by adding a datastore that is written to and read from. `uvicorn` serves the web application.<br><br>Pydantic is used for data validation, json parsing and data type conversion, if necessary. |
 
 ## Entry Points
+
 Describe what the ingress and egress points are in the application, especially what is exposed to the user.
 
-| Context | Rationale | Description |
-| --- | --- | --- |
-| Whole repo | This can be done file by file but seems to make sense that the entire repo would be analyzed for points of data ingress and egress. | TBD |
+| **Context** | **Rationale**                                                                         | **Description**                                                                                                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.py`    | Data moves via API calls in this application. No need to analyze the entire codebase. | Reviewing the Swagger UI at http://localhost:8000/docs there are a total of 10 user-initiated entry points to the application: 5 for `prompts`, 4 for `collections`, and 1 for `health`. |
 
+## Data Flow
 
+Describe how a request is sent from a user throught the system, to storage, and returns a response back to the user.
 
-□ Data flow — how a request travels from route to storage and back
-□ Models and relationships — how prompts and collections relate
-□ Storage layer — how it works and what its limitations are
-□ External dependencies — everything the service relies on
-□ Context strategy section — for each stage of exploration, whether you gave the AI the whole repository
-or a single file, and why, based on the size or coupling of the code
+| **Context** | **Rationale**                                                                                                                                                                         | **Description**                                                                                                                                                                                                                                                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Whole repo  | I considered constraining this analysis to just the `api.py` file but it involves `storage.py`, too, and possibly other classes. Better to run the review across the entire codebase. | This one is pretty straightforward: users submit their input via the UI and API calls send data through to respective models depending on the action being triggered (create a prompt, modify a prompt, delete a collection, etc.). Operations are stored in memory as Python dictionaries. Responses are generated from the API calls.|
 
+## Models and Relationships
 
+Describe the relationship between prompts and collections.
+
+| **Context** | **Rationale**                                                                      | **Description** |
+| ----------- | ---------------------------------------------------------------------------------- | --------------- |
+| `models.py` | This analysis is limited to the `models.py` file since it's where they're defined. | TODO            |
