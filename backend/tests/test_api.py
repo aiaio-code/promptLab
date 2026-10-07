@@ -101,10 +101,7 @@ class TestPrompts:
         assert data["updated_at"] != original_updated_at
 
     def test_sorting_order(self, client: TestClient):
-        """Test that prompts are sorted newest first.
-
-        NOTE: This test might fail due to Bug #3!
-        """
+        """Test that prompts are sorted newest first."""
         import time
         # Create prompts with delay
         prompt1 = {"title": "First", "content": "First prompt content"}
@@ -118,7 +115,7 @@ class TestPrompts:
         prompts = response.json()["prompts"]
 
         # Newest (Second) should be first
-        assert prompts[0]["title"] == "Second"  # Will fail until Bug #3 fixed
+        assert prompts[0]["title"] == "Second"
 
 
 class TestCollections:
