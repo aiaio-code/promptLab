@@ -5,7 +5,11 @@ In a production environment, this would be replaced with a database.
 """
 
 from typing import Dict, List, Optional
-from app.models import Prompt, Collection
+from app.models import Prompt, Collection, get_current_time
+
+
+# System collection that catches prompts whose collection is deleted
+UNASSIGNED_COLLECTION_NAME = "Unassigned"
 
 
 class Storage:
@@ -58,6 +62,34 @@ class Storage:
     def get_prompts_by_collection(self, collection_id: str) -> List[Prompt]:
         return [p for p in self._prompts.values() if p.collection_id == collection_id]
     
+    def get_collection_by_name(self, name: str) -> Optional[Collection]:
+        for collection in self._collections.values():
+            if collection.name == name:
+                return collection
+        return None
+
+    def get_or_create_unassigned_collection(self) -> Collection:
+        existing = self.get_collection_by_name(UNASSIGNED_COLLECTION_NAME)
+        if existing:
+            return existing
+        return self.create_collection(Collection(
+            name=UNASSIGNED_COLLECTION_NAME,
+            description="Prompts that are not assigned to a collection"
+        ))
+
+    def reassign_prompts(self, from_collection_id: str, to_collection_id: str) -> int:
+        """Move all prompts from one collection to another.
+
+        Returns the number of prompts reassigned.
+        """
+        moved = 0
+        for prompt in self._prompts.values():
+            if prompt.collection_id == from_collection_id:
+                prompt.collection_id = to_collection_id
+                prompt.updated_at = get_current_time()
+                moved += 1
+        return moved
+
     # ============== Utility ==============
     
     def clear(self):

@@ -140,29 +140,210 @@ class TestCollections:
         response = client.get("/collections/nonexistent-id")
         assert response.status_code == 404
 
-    def test_delete_collection_with_prompts(self, client: TestClient, sample_collection_data, sample_prompt_data):
-        """Test deleting a collection that has prompts.
+    def test_delete_collection_empty(self, client: TestClient, sample_collection_data):
+        """Deleting an empty collection returns 204 with no action needed."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
 
-        NOTE: Bug #4 - prompts become orphaned after collection deletion.
-        This test documents the current (buggy) behavior.
-        After fixing, update the test to verify correct behavior.
-        """
-        # Create collection
-        col_response = client.post("/collections", json=sample_collection_data)
-        collection_id = col_response.json()["id"]
+        response = client.delete(f"/collections/{collection_id}")
+        assert response.status_code == 204
 
-        # Create prompt in collection
-        prompt_data = {**sample_prompt_data, "collection_id": collection_id}
-        prompt_response = client.post("/prompts", json=prompt_data)
-        prompt_id = prompt_response.json()["id"]
+        assert client.get(f"/collections/{collection_id}").status_code == 404
 
-        # Delete collection
-        client.delete(f"/collections/{collection_id}")
-        
-        # The prompt still exists but has invalid collection_id
-        # This is Bug #4 - should be handled properly
+    def test_delete_collection_with_prompts_requires_action(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """Deleting a non-empty collection without an action returns 409 and changes nothing."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": collection_id})
+
+        response = client.delete(f"/collections/{collection_id}")
+        assert response.status_code == 409
+        detail = response.json()["detail"]
+        assert detail["orphaned_prompt_count"] == 1
+        assert set(detail["options"]) == {"reassign", "create_new", "unassign"}
+
+        # Atomicity: collection and prompt are untouched
+        assert client.get(f"/collections/{collection_id}").status_code == 200
+        prompt = client.get("/prompts").json()["prompts"][0]
+        assert prompt["collection_id"] == collection_id
+
+    def test_delete_collection_action_reassign(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """action=reassign moves prompts to the chosen existing collection."""
+        source_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        target_id = client.post("/collections", json={"name": "Marketing"}).json()["id"]
+        prompt_id = client.post(
+            "/prompts", json={**sample_prompt_data, "collection_id": source_id}
+        ).json()["id"]
+        original_updated_at = client.get(f"/prompts/{prompt_id}").json()["updated_at"]
+
+        import time
+        time.sleep(0.1)  # Ensure a timestamp change would be visible
+
+        response = client.delete(
+            f"/collections/{source_id}",
+            params={"action": "reassign", "target_collection_id": target_id}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["deleted_collection_id"] == source_id
+        assert data["action"] == "reassign"
+        assert data["prompts_moved"] == 1
+        assert data["target_collection_id"] == target_id
+        assert data["target_collection_name"] == "Marketing"
+
+        # Source collection is gone and the prompt now points at the target
+        assert client.get(f"/collections/{source_id}").status_code == 404
+        prompt = client.get(f"/prompts/{prompt_id}").json()
+        assert prompt["collection_id"] == target_id
+        assert prompt["updated_at"] != original_updated_at
+
+    def test_delete_collection_action_reassign_missing_target(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """action=reassign without target_collection_id returns 400."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": collection_id})
+
+        response = client.delete(f"/collections/{collection_id}", params={"action": "reassign"})
+        assert response.status_code == 400
+        assert client.get(f"/collections/{collection_id}").status_code == 200
+
+    def test_delete_collection_action_reassign_to_self(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """Reassigning prompts to the collection being deleted returns 400."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": collection_id})
+
+        response = client.delete(
+            f"/collections/{collection_id}",
+            params={"action": "reassign", "target_collection_id": collection_id}
+        )
+        assert response.status_code == 400
+        assert client.get(f"/collections/{collection_id}").status_code == 200
+
+    def test_delete_collection_action_reassign_invalid_target(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """action=reassign with a non-existent target collection returns 400."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": collection_id})
+
+        response = client.delete(
+            f"/collections/{collection_id}",
+            params={"action": "reassign", "target_collection_id": "nonexistent-id"}
+        )
+        assert response.status_code == 400
+        assert client.get(f"/collections/{collection_id}").status_code == 200
+
+    def test_delete_collection_action_create_new(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """action=create_new creates a collection and moves the prompts into it."""
+        source_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        prompt_id = client.post(
+            "/prompts", json={**sample_prompt_data, "collection_id": source_id}
+        ).json()["id"]
+
+        response = client.delete(
+            f"/collections/{source_id}",
+            params={"action": "create_new", "new_collection_name": "Archived"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["prompts_moved"] == 1
+        assert data["target_collection_name"] == "Archived"
+
+        # New collection exists and holds the prompt
+        new_collection = client.get(f"/collections/{data['target_collection_id']}")
+        assert new_collection.status_code == 200
+        assert new_collection.json()["name"] == "Archived"
+        assert client.get(f"/prompts/{prompt_id}").json()["collection_id"] == data["target_collection_id"]
+        assert client.get(f"/collections/{source_id}").status_code == 404
+
+    def test_delete_collection_action_create_new_reuses_existing_name(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """create_new with a name that already exists reuses that collection."""
+        source_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        existing_id = client.post("/collections", json={"name": "Research"}).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": source_id})
+
+        response = client.delete(
+            f"/collections/{source_id}",
+            params={"action": "create_new", "new_collection_name": "Research"}
+        )
+        assert response.status_code == 200
+        assert response.json()["target_collection_id"] == existing_id
+
+        # No duplicate collection was created
+        collections = client.get("/collections").json()["collections"]
+        assert [c["name"] for c in collections] == ["Research"]
+
+    def test_delete_collection_action_create_new_missing_name(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """action=create_new without a name returns 400."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": collection_id})
+
+        response = client.delete(f"/collections/{collection_id}", params={"action": "create_new"})
+        assert response.status_code == 400
+        assert client.get(f"/collections/{collection_id}").status_code == 200
+
+    def test_delete_collection_action_create_new_same_name_as_deleted(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """create_new naming the collection being deleted returns 400."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": collection_id})
+
+        response = client.delete(
+            f"/collections/{collection_id}",
+            params={"action": "create_new", "new_collection_name": sample_collection_data["name"]}
+        )
+        assert response.status_code == 400
+        assert client.get(f"/collections/{collection_id}").status_code == 200
+
+    def test_delete_collection_action_unassign(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """action=unassign moves prompts to the system 'Unassigned' collection."""
+        source_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        prompt_id = client.post(
+            "/prompts", json={**sample_prompt_data, "collection_id": source_id}
+        ).json()["id"]
+
+        response = client.delete(f"/collections/{source_id}", params={"action": "unassign"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["prompts_moved"] == 1
+        assert data["target_collection_name"] == "Unassigned"
+
+        # The Unassigned collection exists and holds the prompt
+        unassigned = client.get(f"/collections/{data['target_collection_id']}")
+        assert unassigned.status_code == 200
+        assert unassigned.json()["name"] == "Unassigned"
+        assert client.get(f"/prompts/{prompt_id}").json()["collection_id"] == data["target_collection_id"]
+        assert client.get(f"/collections/{source_id}").status_code == 404
+
+    def test_delete_collection_unassign_reuses_single_unassigned_collection(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """Repeated unassign deletions share one 'Unassigned' collection."""
+        for name in ("Alpha", "Beta"):
+            col_id = client.post("/collections", json={"name": name}).json()["id"]
+            client.post("/prompts", json={**sample_prompt_data, "collection_id": col_id})
+            response = client.delete(f"/collections/{col_id}", params={"action": "unassign"})
+            assert response.status_code == 200
+
+        collections = client.get("/collections").json()
+        assert collections["total"] == 1
+        assert collections["collections"][0]["name"] == "Unassigned"
+
+        unassigned_id = collections["collections"][0]["id"]
         prompts = client.get("/prompts").json()["prompts"]
-        if prompts:
-            # Prompt exists with orphaned collection_id
-            assert prompts[0]["collection_id"] == collection_id
-            # After fix, collection_id should be None or prompt should be deleted
+        assert len(prompts) == 2
+        assert all(p["collection_id"] == unassigned_id for p in prompts)
+
+    def test_delete_unassigned_collection_is_forbidden(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """The system 'Unassigned' collection cannot be deleted."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": collection_id})
+        unassigned_id = client.delete(
+            f"/collections/{collection_id}", params={"action": "unassign"}
+        ).json()["target_collection_id"]
+
+        # Even with an action supplied, deletion is refused
+        response = client.delete(f"/collections/{unassigned_id}", params={"action": "unassign"})
+        assert response.status_code == 400
+        assert client.get(f"/collections/{unassigned_id}").status_code == 200
+
+    def test_delete_collection_invalid_action(self, client: TestClient, sample_collection_data, sample_prompt_data):
+        """An unknown action value is rejected with 422."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        client.post("/prompts", json={**sample_prompt_data, "collection_id": collection_id})
+
+        response = client.delete(f"/collections/{collection_id}", params={"action": "bogus"})
+        assert response.status_code == 422
+        assert client.get(f"/collections/{collection_id}").status_code == 200

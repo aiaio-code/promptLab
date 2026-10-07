@@ -1,8 +1,8 @@
 """FastAPI routes for PromptLab"""
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from typing import Literal, Optional
 
 from app.models import (
     Prompt, PromptCreate, PromptUpdate,
@@ -10,7 +10,7 @@ from app.models import (
     PromptList, CollectionList, HealthResponse,
     get_current_time
 )
-from app.storage import storage
+from app.storage import storage, UNASSIGNED_COLLECTION_NAME
 from app.utils import sort_prompts_by_date, filter_prompts_by_collection, search_prompts
 from app import __version__
 
@@ -138,16 +138,108 @@ def create_collection(collection_data: CollectionCreate):
     return storage.create_collection(collection)
 
 
-@app.delete("/collections/{collection_id}", status_code=204)
-def delete_collection(collection_id: str):
-    # BUG #4: We delete the collection but don't handle the prompts!
-    # Prompts with this collection_id become orphaned with invalid reference
-    # Should either: delete the prompts, set collection_id to None, or prevent deletion
-    
-    if not storage.delete_collection(collection_id):
+@app.delete("/collections/{collection_id}")
+def delete_collection(
+    collection_id: str,
+    action: Optional[Literal["reassign", "create_new", "unassign"]] = None,
+    target_collection_id: Optional[str] = None,
+    new_collection_name: Optional[str] = None,
+    new_collection_description: Optional[str] = None,
+):
+    """Delete a collection without orphaning its prompts.
+
+    - Empty collection: deleted immediately, returns 204.
+    - Collection with prompts and no action: returns 409 with an impact
+      preview (orphaned prompt count + available options) so the client
+      can prompt the user for a choice.
+    - Collection with prompts and an action: prompts are moved first, then
+      the collection is deleted. Returns 200 with a summary of what happened.
+
+    Actions:
+    - reassign:    move prompts to an existing collection (target_collection_id)
+    - create_new:  create (or reuse by name) a collection (new_collection_name)
+                   and move prompts into it
+    - unassign:    move prompts to the system "Unassigned" collection
+    """
+    collection = storage.get_collection(collection_id)
+    if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
-    
-    # Missing: Handle prompts that belong to this collection!
-    
-    return None
+
+    # The Unassigned collection is the safety net for orphaned prompts,
+    # so it must always exist.
+    if collection.name == UNASSIGNED_COLLECTION_NAME:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The '{UNASSIGNED_COLLECTION_NAME}' collection cannot be deleted"
+        )
+
+    prompts = storage.get_prompts_by_collection(collection_id)
+
+    # Nothing to reassign: delete right away
+    if not prompts:
+        storage.delete_collection(collection_id)
+        return Response(status_code=204)
+
+    # Prompts would be orphaned: force the client to make an explicit choice
+    if action is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    f"Collection '{collection.name}' still has {len(prompts)} "
+                    f"prompt(s). Choose how to handle them before deleting."
+                ),
+                "orphaned_prompt_count": len(prompts),
+                "options": ["reassign", "create_new", "unassign"],
+            }
+        )
+
+    # Validate everything before mutating anything, so a failed request
+    # leaves no partial state behind.
+    if action == "reassign":
+        if not target_collection_id:
+            raise HTTPException(
+                status_code=400,
+                detail="target_collection_id is required when action='reassign'"
+            )
+        if target_collection_id == collection_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot reassign prompts to the collection being deleted"
+            )
+        target = storage.get_collection(target_collection_id)
+        if not target:
+            raise HTTPException(status_code=400, detail="Target collection not found")
+    elif action == "create_new":
+        if not new_collection_name or not new_collection_name.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="new_collection_name is required when action='create_new'"
+            )
+        name = new_collection_name.strip()
+        target = storage.get_collection_by_name(name)
+        if target and target.id == collection_id:
+            raise HTTPException(
+                status_code=400,
+                detail="new_collection_name matches the collection being deleted"
+            )
+        if target is None:
+            target = storage.create_collection(Collection(
+                name=name,
+                description=new_collection_description
+            ))
+    else:  # action == "unassign"
+        target = storage.get_or_create_unassigned_collection()
+
+    # All validated: move the prompts first, then delete the collection
+    moved = storage.reassign_prompts(collection_id, target.id)
+    storage.delete_collection(collection_id)
+
+    return {
+        "deleted_collection_id": collection_id,
+        "action": action,
+        "prompts_moved": moved,
+        "target_collection_id": target.id,
+        "target_collection_name": target.name,
+    }
 
