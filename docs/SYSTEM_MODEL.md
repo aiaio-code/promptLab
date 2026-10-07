@@ -1,4 +1,5 @@
 # System Model
+
 ## Architecture
 
 Describe what this application does and how the components interact with each other.
@@ -19,14 +20,30 @@ Describe what the ingress and egress points are in the application, especially w
 
 Describe how a request is sent from a user throught the system, to storage, and returns a response back to the user.
 
-| **Context** | **Rationale**                                                                                                                                                                         | **Description**                                                                                                                                                                                                                                                                                                                             |
+| **Context** | **Rationale**                                                                                                                                                                         | **Description**                                                                                                                                                                                                                                                                                                                         |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Whole repo  | I considered constraining this analysis to just the `api.py` file but it involves `storage.py`, too, and possibly other classes. Better to run the review across the entire codebase. | This one is pretty straightforward: users submit their input via the UI and API calls send data through to respective models depending on the action being triggered (create a prompt, modify a prompt, delete a collection, etc.). Operations are stored in memory as Python dictionaries. Responses are generated from the API calls.|
+| Whole repo  | I considered constraining this analysis to just the `api.py` file but it involves `storage.py`, too, and possibly other classes. Better to run the review across the entire codebase. | This one is pretty straightforward: users submit their input via the UI and API calls send data through to respective models depending on the action being triggered (create a prompt, modify a prompt, delete a collection, etc.). Operations are stored in memory as Python dictionaries. Responses are generated from the API calls. |
 
 ## Models and Relationships
 
 Describe the relationship between prompts and collections.
 
-| **Context** | **Rationale**                                                                      | **Description** |
-| ----------- | ---------------------------------------------------------------------------------- | --------------- |
-| `models.py` | This analysis is limited to the `models.py` file since it's where they're defined. | TODO            |
+| **Context** | **Rationale**                                                                      | **Description**                                                                                                                                                                                                     |
+| ----------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models.py` | This analysis is limited to the `models.py` file since it's where they're defined. | `models.py` creates Pydantic data structures used by the application. A prompt is not required to be added to a collection, but can be added to only one. Collections, of course, can include more than one prompt. |
+
+## Storage
+
+Describe how the application stores data.
+
+| **Context**  | **Rationale**                                                                                     | **Description**                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage.py` | This analysis is limited to the `storage.py` file since this functionality is encapsulated there. | The biggest storage-related issue, rendering the entire project funtionally unusable, is that data is not persistent. Given the application is designed to serve as a prompt repository, the "repository" part is missing once the application closes. There is at least one bug tied to how the code handles deletions; otherwise, storage is straightforward in that it saves prompts in a Python dictionary. |
+
+## External Dependencies
+
+Describe what this application relies on to function as intended.
+
+| **Context** | **Rationale**                                                                                  | **Description**                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Whole repo  | Dependencies apply to the entire application, therefore the context should include everything. | All package and library dependencies appear to be inlcuded as part of the `requirements.txt` file. Asked AI to run through the entire codebase to identify anything not included in one of the listed libraries, but this part of the applications seems to be solid. I'll need to expand the requirements list as additional functionality is included (specifically, persistent storage). |

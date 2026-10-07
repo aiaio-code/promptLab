@@ -14,7 +14,6 @@ from app.storage import storage
 from app.utils import sort_prompts_by_date, filter_prompts_by_collection, search_prompts
 from app import __version__
 
-
 app = FastAPI(
     title="PromptLab API",
     description="AI Prompt Engineering Platform",
@@ -29,7 +28,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ============== Health Check ==============
 
@@ -64,15 +62,13 @@ def list_prompts(
 
 @app.get("/prompts/{prompt_id}", response_model=Prompt)
 def get_prompt(prompt_id: str):
-    # BUG #1: This will raise a 500 error if prompt doesn't exist
-    # because we're accessing .id on None
-    # Should return 404 instead!
     prompt = storage.get_prompt(prompt_id)
     
-    # This line causes the bug - accessing attribute on None
-    if prompt.id:
+    if prompt is not None:
         return prompt
-
+    else:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+    
 
 @app.post("/prompts", response_model=Prompt, status_code=201)
 def create_prompt(prompt_data: PromptCreate):
@@ -125,7 +121,6 @@ def delete_prompt(prompt_id: str):
 
 
 # ============== Collection Endpoints ==============
-
 @app.get("/collections", response_model=CollectionList)
 def list_collections():
     collections = storage.get_all_collections()
@@ -138,7 +133,7 @@ def get_collection(collection_id: str):
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
     return collection
-
+    
 
 @app.post("/collections", response_model=Collection, status_code=201)
 def create_collection(collection_data: CollectionCreate):
@@ -158,3 +153,4 @@ def delete_collection(collection_id: str):
     # Missing: Handle prompts that belong to this collection!
     
     return None
+
