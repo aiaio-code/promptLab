@@ -12,6 +12,7 @@ class TestHealth:
     """Tests for health endpoint."""
     
     def test_health_check(self, client: TestClient):
+        """Health endpoint reports healthy status and the app version."""
         response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
@@ -23,6 +24,7 @@ class TestPrompts:
     """Tests for prompt endpoints."""
     
     def test_create_prompt(self, client: TestClient, sample_prompt_data):
+        """Creating a prompt returns 201 with generated id and timestamps."""
         response = client.post("/prompts", json=sample_prompt_data)
         assert response.status_code == 201
         data = response.json()
@@ -32,6 +34,7 @@ class TestPrompts:
         assert "created_at" in data
     
     def test_list_prompts_empty(self, client: TestClient):
+        """Listing prompts returns an empty list when none exist."""
         response = client.get("/prompts")
         assert response.status_code == 200
         data = response.json()
@@ -39,6 +42,7 @@ class TestPrompts:
         assert data["total"] == 0
     
     def test_list_prompts_with_data(self, client: TestClient, sample_prompt_data):
+        """Created prompts appear in the list response with a correct total."""
         # Create a prompt first
         client.post("/prompts", json=sample_prompt_data)
         
@@ -49,6 +53,7 @@ class TestPrompts:
         assert data["total"] == 1
     
     def test_get_prompt_success(self, client: TestClient, sample_prompt_data):
+        """A stored prompt can be retrieved by its id."""
         # Create a prompt first
         create_response = client.post("/prompts", json=sample_prompt_data)
         prompt_id = create_response.json()["id"]
@@ -64,6 +69,7 @@ class TestPrompts:
         assert response.status_code == 404
     
     def test_delete_prompt(self, client: TestClient, sample_prompt_data):
+        """Deleting a prompt returns 204 and subsequent GETs return 404."""
         # Create a prompt first
         create_response = client.post("/prompts", json=sample_prompt_data)
         prompt_id = create_response.json()["id"]
@@ -77,6 +83,7 @@ class TestPrompts:
         assert get_response.status_code == 404
 
     def test_update_prompt(self, client: TestClient, sample_prompt_data):
+        """PUT replaces the prompt's fields and refreshes updated_at."""
         # Create a prompt first
         create_response = client.post("/prompts", json=sample_prompt_data)
         prompt_id = create_response.json()["id"]
@@ -137,6 +144,7 @@ class TestPrompts:
         assert data["updated_at"] != original["updated_at"]
 
     def test_patch_prompt_not_found(self, client: TestClient):
+        """PATCH on a non-existent prompt returns 404."""
         response = client.patch("/prompts/nonexistent-id", json={"title": "Nope"})
         assert response.status_code == 404
 
@@ -198,6 +206,7 @@ class TestCollections:
     """Tests for collection endpoints."""
 
     def test_create_collection(self, client: TestClient, sample_collection_data):
+        """Creating a collection returns 201 with a generated id."""
         response = client.post("/collections", json=sample_collection_data)
         assert response.status_code == 201
         data = response.json()
@@ -205,6 +214,7 @@ class TestCollections:
         assert "id" in data
 
     def test_list_collections(self, client: TestClient, sample_collection_data):
+        """Created collections appear in the list response."""
         client.post("/collections", json=sample_collection_data)
 
         response = client.get("/collections")
@@ -213,6 +223,7 @@ class TestCollections:
         assert len(data["collections"]) == 1
 
     def test_get_collection_not_found(self, client: TestClient):
+        """Getting a non-existent collection returns 404."""
         response = client.get("/collections/nonexistent-id")
         assert response.status_code == 404
 

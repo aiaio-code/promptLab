@@ -33,6 +33,12 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
+    """Report the operational status of the API.
+
+    Returns:
+        A HealthResponse indicating the service is healthy along with the
+        running application version.
+    """
     return HealthResponse(status="healthy", version=__version__)
 
 
@@ -43,6 +49,20 @@ def list_prompts(
     collection_id: Optional[str] = None,
     search: Optional[str] = None
 ):
+    """List all prompts, optionally filtered by collection and/or search text.
+
+    Results are always sorted by creation date, newest first. Both filters
+    can be combined; the search filter is applied after collection filtering.
+
+    Args:
+        collection_id: If provided, only prompts belonging to the collection
+            with this identifier are returned.
+        search: If provided, only prompts whose title or description contains
+            this query (case-insensitive) are returned.
+
+    Returns:
+        A PromptList containing the matching prompts and the total count.
+    """
     prompts = storage.get_all_prompts()
     
     # Filter by collection if specified
@@ -61,6 +81,17 @@ def list_prompts(
 
 @app.get("/prompts/{prompt_id}", response_model=Prompt)
 def get_prompt(prompt_id: str):
+    """Retrieve a prompt by its unique identifier.
+
+    Args:
+        prompt_id: The unique identifier of the prompt to retrieve.
+
+    Returns:
+        The Prompt with the given identifier.
+
+    Raises:
+        HTTPException: 404 if no prompt exists with the given identifier.
+    """
     prompt = storage.get_prompt(prompt_id)
     
     if prompt is not None:
@@ -71,6 +102,19 @@ def get_prompt(prompt_id: str):
 
 @app.post("/prompts", response_model=Prompt, status_code=201)
 def create_prompt(prompt_data: PromptCreate):
+    """Create a new prompt.
+
+    Args:
+        prompt_data: The title, content, and optional description and
+            collection assignment for the new prompt.
+
+    Returns:
+        The newly created Prompt, including its generated id and timestamps.
+
+    Raises:
+        HTTPException: 400 if the provided collection_id does not reference
+            an existing collection.
+    """
     # Validate collection exists if provided
     if prompt_data.collection_id:
         collection = storage.get_collection(prompt_data.collection_id)
@@ -83,6 +127,24 @@ def create_prompt(prompt_data: PromptCreate):
 
 @app.put("/prompts/{prompt_id}", response_model=Prompt)
 def update_prompt(prompt_id: str, prompt_data: PromptUpdate):
+    """Replace every mutable field of an existing prompt (full update).
+
+    All fields must be supplied in the request; unlike PATCH, omitted fields
+    are not preserved from the existing prompt. The created_at timestamp is
+    retained and updated_at is refreshed to the current time.
+
+    Args:
+        prompt_id: The unique identifier of the prompt to replace.
+        prompt_data: The complete new state of the prompt.
+
+    Returns:
+        The updated Prompt.
+
+    Raises:
+        HTTPException: 404 if no prompt exists with the given identifier.
+        HTTPException: 400 if the provided collection_id does not reference
+            an existing collection.
+    """
     existing = storage.get_prompt(prompt_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Prompt not found")
@@ -108,6 +170,25 @@ def update_prompt(prompt_id: str, prompt_data: PromptUpdate):
 
 @app.patch("/prompts/{prompt_id}", response_model=Prompt)
 def patch_prompt(prompt_id: str, prompt_data: PromptPatch):
+    """Partially update an existing prompt (merge semantics).
+
+    Only fields explicitly provided in the request body are applied; omitted
+    fields are left unchanged, while an explicit null clears a nullable
+    field (description, collection_id). An empty body is a valid no-op.
+    The updated_at timestamp is always refreshed.
+
+    Args:
+        prompt_id: The unique identifier of the prompt to update.
+        prompt_data: The subset of prompt fields to change.
+
+    Returns:
+        The updated Prompt.
+
+    Raises:
+        HTTPException: 404 if no prompt exists with the given identifier.
+        HTTPException: 400 if a non-null collection_id does not reference an
+            existing collection.
+    """
     existing = storage.get_prompt(prompt_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Prompt not found")
@@ -131,6 +212,17 @@ def patch_prompt(prompt_id: str, prompt_data: PromptPatch):
 
 @app.delete("/prompts/{prompt_id}", status_code=204)
 def delete_prompt(prompt_id: str):
+    """Delete a prompt by its unique identifier.
+
+    Args:
+        prompt_id: The unique identifier of the prompt to delete.
+
+    Returns:
+        None. Responds with HTTP 204 No Content on success.
+
+    Raises:
+        HTTPException: 404 if no prompt exists with the given identifier.
+    """
     if not storage.delete_prompt(prompt_id):
         raise HTTPException(status_code=404, detail="Prompt not found")
     return None
@@ -139,12 +231,28 @@ def delete_prompt(prompt_id: str):
 # ============== Collection Endpoints ==============
 @app.get("/collections", response_model=CollectionList)
 def list_collections():
+    """List all collections.
+
+    Returns:
+        A CollectionList containing every collection and the total count.
+    """
     collections = storage.get_all_collections()
     return CollectionList(collections=collections, total=len(collections))
 
 
 @app.get("/collections/{collection_id}", response_model=Collection)
 def get_collection(collection_id: str):
+    """Retrieve a collection by its unique identifier.
+
+    Args:
+        collection_id: The unique identifier of the collection to retrieve.
+
+    Returns:
+        The Collection with the given identifier.
+
+    Raises:
+        HTTPException: 404 if no collection exists with the given identifier.
+    """
     collection = storage.get_collection(collection_id)
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
@@ -153,6 +261,16 @@ def get_collection(collection_id: str):
 
 @app.post("/collections", response_model=Collection, status_code=201)
 def create_collection(collection_data: CollectionCreate):
+    """Create a new collection.
+
+    Args:
+        collection_data: The name and optional description for the new
+            collection.
+
+    Returns:
+        The newly created Collection, including its generated id and
+        created_at timestamp.
+    """
     collection = Collection(**collection_data.model_dump())
     return storage.create_collection(collection)
 
@@ -167,6 +285,8 @@ def delete_collection(
 ):
     """Delete a collection without orphaning its prompts.
 
+    Behaves as a two-step "confirm and choose" flow:
+
     - Empty collection: deleted immediately, returns 204.
     - Collection with prompts and no action: returns 409 with an impact
       preview (orphaned prompt count + available options) so the client
@@ -179,6 +299,31 @@ def delete_collection(
     - create_new:  create (or reuse by name) a collection (new_collection_name)
                    and move prompts into it
     - unassign:    move prompts to the system "Unassigned" collection
+
+    Args:
+        collection_id: The unique identifier of the collection to delete.
+        action: How to handle the collection's prompts before deletion.
+            Required when the collection still contains prompts.
+        target_collection_id: Id of an existing collection to receive the
+            prompts. Required when action="reassign".
+        new_collection_name: Name of the collection to create (or reuse if
+            the name already exists) and move prompts into. Required when
+            action="create_new".
+        new_collection_description: Optional description applied only when
+            action="create_new" creates a brand-new collection.
+
+    Returns:
+        None with HTTP 204 when the deleted collection was empty, otherwise
+        a dict summarizing the operation: deleted_collection_id, action,
+        prompts_moved, target_collection_id, and target_collection_name.
+
+    Raises:
+        HTTPException: 404 if no collection exists with the given identifier.
+        HTTPException: 400 if deleting the system "Unassigned" collection,
+            if required action parameters are missing or invalid, or if the
+            target collection is the one being deleted.
+        HTTPException: 409 if the collection still has prompts and no action
+            was supplied; the response body carries an impact preview.
     """
     collection = storage.get_collection(collection_id)
     if not collection:
