@@ -117,6 +117,82 @@ class TestPrompts:
         # Newest (Second) should be first
         assert prompts[0]["title"] == "Second"
 
+    def test_patch_prompt_partial_update(self, client: TestClient, sample_prompt_data):
+        """PATCH updates only the provided fields and refreshes updated_at."""
+        create_response = client.post("/prompts", json=sample_prompt_data)
+        prompt_id = create_response.json()["id"]
+        original = create_response.json()
+
+        import time
+        time.sleep(0.1)  # Ensure a timestamp change would be visible
+
+        response = client.patch(f"/prompts/{prompt_id}", json={"title": "Patched Title"})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["title"] == "Patched Title"
+        assert data["content"] == original["content"]
+        assert data["description"] == original["description"]
+        assert data["collection_id"] == original["collection_id"]
+        assert data["created_at"] == original["created_at"]
+        assert data["updated_at"] != original["updated_at"]
+
+    def test_patch_prompt_not_found(self, client: TestClient):
+        response = client.patch("/prompts/nonexistent-id", json={"title": "Nope"})
+        assert response.status_code == 404
+
+    def test_patch_prompt_collection_change_and_clear(self, client: TestClient, sample_prompt_data, sample_collection_data):
+        """PATCH can move a prompt into a collection and later clear it with null."""
+        collection_id = client.post("/collections", json=sample_collection_data).json()["id"]
+        prompt_id = client.post("/prompts", json=sample_prompt_data).json()["id"]
+
+        # Move the prompt into the collection
+        response = client.patch(f"/prompts/{prompt_id}", json={"collection_id": collection_id})
+        assert response.status_code == 200
+        assert response.json()["collection_id"] == collection_id
+
+        # Explicit null removes the prompt from its collection
+        response = client.patch(f"/prompts/{prompt_id}", json={"collection_id": None})
+        assert response.status_code == 200
+        assert response.json()["collection_id"] is None
+
+    def test_patch_prompt_invalid_collection(self, client: TestClient, sample_prompt_data):
+        """PATCH with a non-existent collection_id returns 400 and changes nothing."""
+        prompt_id = client.post("/prompts", json=sample_prompt_data).json()["id"]
+
+        response = client.patch(f"/prompts/{prompt_id}", json={"collection_id": "nonexistent-id"})
+        assert response.status_code == 400
+        assert client.get(f"/prompts/{prompt_id}").json()["collection_id"] is None
+
+    def test_patch_prompt_clear_description(self, client: TestClient, sample_prompt_data):
+        """An explicit null clears a nullable field while others persist."""
+        prompt_id = client.post("/prompts", json=sample_prompt_data).json()["id"]
+
+        response = client.patch(f"/prompts/{prompt_id}", json={"description": None})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["description"] is None
+        assert data["title"] == sample_prompt_data["title"]
+        assert data["content"] == sample_prompt_data["content"]
+
+    def test_patch_prompt_invalid_title(self, client: TestClient, sample_prompt_data):
+        """PATCH enforces field constraints (empty title rejected with 422)."""
+        prompt_id = client.post("/prompts", json=sample_prompt_data).json()["id"]
+
+        response = client.patch(f"/prompts/{prompt_id}", json={"title": ""})
+        assert response.status_code == 422
+        assert client.get(f"/prompts/{prompt_id}").json()["title"] == sample_prompt_data["title"]
+
+    def test_patch_prompt_empty_body(self, client: TestClient, sample_prompt_data):
+        """PATCH with an empty body is a valid no-op."""
+        prompt_id = client.post("/prompts", json=sample_prompt_data).json()["id"]
+
+        response = client.patch(f"/prompts/{prompt_id}", json={})
+        assert response.status_code == 200
+        data = response.json()
+        assert data["title"] == sample_prompt_data["title"]
+        assert data["content"] == sample_prompt_data["content"]
+        assert data["description"] == sample_prompt_data["description"]
+
 
 class TestCollections:
     """Tests for collection endpoints."""

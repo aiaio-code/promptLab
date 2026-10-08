@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Literal, Optional
 
 from app.models import (
-    Prompt, PromptCreate, PromptUpdate,
+    Prompt, PromptCreate, PromptUpdate, PromptPatch,
     Collection, CollectionCreate,
     PromptList, CollectionList, HealthResponse,
     get_current_time
@@ -106,8 +106,27 @@ def update_prompt(prompt_id: str, prompt_data: PromptUpdate):
     return storage.update_prompt(prompt_id, updated_prompt)
 
 
-# NOTE: PATCH endpoint is missing! Students need to implement this.
-# It should allow partial updates (only update provided fields)
+@app.patch("/prompts/{prompt_id}", response_model=Prompt)
+def patch_prompt(prompt_id: str, prompt_data: PromptPatch):
+    existing = storage.get_prompt(prompt_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Prompt not found")
+
+    # Only apply the fields the client actually sent.
+    # Omitted fields stay unchanged; an explicit null clears the field.
+    changes = prompt_data.model_dump(exclude_unset=True)
+
+    # Validate the collection only when it is being changed
+    # (explicit null means "remove from collection" and needs no check)
+    if "collection_id" in changes and changes["collection_id"] is not None:
+        collection = storage.get_collection(changes["collection_id"])
+        if not collection:
+            raise HTTPException(status_code=400, detail="Collection not found")
+
+    updated_prompt = existing.model_copy(update=changes)
+    updated_prompt.updated_at = get_current_time()
+
+    return storage.update_prompt(prompt_id, updated_prompt)
 
 
 @app.delete("/prompts/{prompt_id}", status_code=204)
